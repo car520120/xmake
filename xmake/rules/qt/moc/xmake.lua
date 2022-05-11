@@ -64,7 +64,7 @@ rule("qt.moc")
         if fileitem then
             fileitem = path.normalize(fileitem)
             for _,rootdir in ipairs(moc_rootdirs) do
-                if fileitem:match(rootdir) then
+                if fileitem:startswith(rootdir) then
                     filter = path.normalize(path.directory(path.relative(fileitem, rootdir)))
                     if '.' == filter then
                         filter = nil

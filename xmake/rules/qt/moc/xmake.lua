@@ -49,11 +49,11 @@ rule("qt.moc")
                     if not path.is_absolute(rootdir) then
                         rootdir = path.absolute(rootdir)
                     end
-                    table.insert(moc_rootdirs,path.normalize(rootdir))
+                    table.insert(moc_rootdirs,path.normalize(rootdir .. "/"))
                 end
             end
-            table.insert(moc_rootdirs,target:scriptdir())
-            table.insert(moc_rootdirs,os.projectdir())
+            table.insert(moc_rootdirs,path.normalize(target:scriptdir() .. "/"))
+            table.insert(moc_rootdirs,path.normalize(os.projectdir() .. "/"))
             target.moc_rootdirs = moc_rootdirs
         end
       

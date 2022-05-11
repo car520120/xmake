@@ -1,3 +1,4 @@
+
 --!A cross-platform build utility based on Lua
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,6 +38,42 @@ rule("qt.moc")
         end
         assert(moc and os.isexec(moc), "moc not found!")
 
+        local moc_rootdirs = target.moc_rootdirs
+        if not moc_rootdirs then
+            moc_rootdirs = {}
+            local filegroups = target:get("filegroups")
+            if  filegroups then
+                local filegroups_extraconf = target:extraconf("filegroups")
+                for _,fg in ipairs(filegroups) do
+                    local rootdir = filegroups_extraconf[fg].rootdir
+                    if not path.is_absolute(rootdir) then
+                        rootdir = path.absolute(rootdir)
+                    end
+                    table.insert(moc_rootdirs,path.normalize(rootdir))
+                end
+            end
+            table.insert(moc_rootdirs,target:scriptdir())
+            table.insert(moc_rootdirs,os.projectdir())
+            target.moc_rootdirs = moc_rootdirs
+        end
+      
+
+
+        local filter
+        local fileitem =  path.is_absolute(sourcefile) and sourcefile or  path.absolute(sourcefile)
+        if fileitem then
+            fileitem = path.normalize(fileitem)
+            for _,rootdir in ipairs(moc_rootdirs) do
+                if fileitem:match(rootdir) then
+                    filter = path.normalize(path.directory(path.relative(fileitem, rootdir)))
+                    if '.' == filter then
+                        filter = nil
+                    end
+                    break
+                end
+            end
+        end
+
         -- get c++ source file for moc
         --
         -- add_files("mainwindow.h") -> moc_MainWindow.cpp
@@ -47,6 +84,11 @@ rule("qt.moc")
         if sourcefile:endswith(".cpp") then
             filename_moc = basename .. ".moc"
         end
+
+        if filter then
+            filename_moc = path.join(filter,filename_moc)
+        end
+
         local sourcefile_moc = path.join(target:autogendir(), "rules", "qt", "moc", filename_moc)
 
         -- add objectfile

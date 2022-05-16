@@ -24,19 +24,19 @@ import("private.service.server_config", {alias = "config"})
 import("private.service.message")
 import("private.service.server")
 import("private.service.stream", {alias = "socket_stream"})
-import("private.service.remote_build.server_session")
+import("private.service.distcc_build.server_session")
 import("lib.detect.find_tool")
 
 -- define module
-local remote_build_server = remote_build_server or server()
-local super = remote_build_server:class()
+local distcc_build_server = distcc_build_server or server()
+local super = distcc_build_server:class()
 
 -- init server
-function remote_build_server:init(daemon)
+function distcc_build_server:init(daemon)
     super.init(self, daemon)
 
     -- init address
-    local address = assert(config.get("remote_build.listen"), "config(remote_build.listen): not found!")
+    local address = assert(config.get("distcc_build.listen"), "config(distcc_build.listen): not found!")
     super.address_set(self, address)
 
     -- init handler
@@ -47,21 +47,21 @@ function remote_build_server:init(daemon)
 end
 
 -- get class
-function remote_build_server:class()
-    return remote_build_server
+function distcc_build_server:class()
+    return distcc_build_server
 end
 
 -- get work directory
-function remote_build_server:workdir()
-    local workdir = config.get("remote_build.workdir")
+function distcc_build_server:workdir()
+    local workdir = config.get("distcc_build.workdir")
     if not workdir then
-        workdir = path.join(global.directory(), "service", "server", "remote_build")
+        workdir = path.join(global.directory(), "service", "server", "distcc_build")
     end
     return workdir
 end
 
 -- on handle message
-function remote_build_server:_on_handle(stream, msg)
+function distcc_build_server:_on_handle(stream, msg)
     local session_id = msg:session_id()
     local session = self:_session(session_id)
     vprint("%s: %s: <session %s>: on handle message(%d)", self, stream:sock(), session_id, msg:code())
@@ -80,20 +80,20 @@ function remote_build_server:_on_handle(stream, msg)
                 end
             end
             if msg:is_connect() then
-                session:open()
+                session:open(respmsg)
             elseif msg:is_disconnect() then
                 session:close()
                 self._SESSIONS[session_id] = nil
             else
                 assert(session:is_connected(), "session has not been connected!")
-                if msg:is_diff() then
-                    session:diff(respmsg)
-                elseif msg:is_sync() then
-                    session:sync(respmsg)
+                if msg:is_compile() then
+                    local ok, errors = session:compile(respmsg)
+                    if not ok then
+                        session_errs = errors
+                        return false
+                    end
                 elseif msg:is_clean() then
                     session:clean()
-                elseif msg:is_runcmd() then
-                    session:runcmd(respmsg)
                 end
             end
             return true
@@ -117,7 +117,7 @@ function remote_build_server:_on_handle(stream, msg)
 end
 
 -- get session
-function remote_build_server:_session(session_id)
+function distcc_build_server:_session(session_id)
     local session = self._SESSIONS[session_id]
     if not session then
         session = server_session(self, session_id)
@@ -127,16 +127,16 @@ function remote_build_server:_session(session_id)
 end
 
 -- close session
-function remote_build_server:_session_close(session_id)
+function distcc_build_server:_session_close(session_id)
     self._SESSIONS[session_id] = nil
 end
 
-function remote_build_server:__tostring()
-    return "<remote_build_server>"
+function distcc_build_server:__tostring()
+    return "<distcc_build_server>"
 end
 
 function main(daemon)
-    local instance = remote_build_server()
+    local instance = distcc_build_server()
     instance:init(daemon ~= nil)
     return instance
 end

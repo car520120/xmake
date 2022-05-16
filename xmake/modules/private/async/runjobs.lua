@@ -50,6 +50,8 @@ end
 -- end
 -- runjobs("test", jobs, {comax = 6, timeout = 1000, on_timer = function (running_jobs_indices) end})
 --
+-- distributed build:
+-- runjobs("test", jobs, {comax = 6, distcc = distcc_build_client.singleton()}
 --
 function main(name, jobs, opt)
 
@@ -57,6 +59,7 @@ function main(name, jobs, opt)
     op = opt or {}
     local total = opt.total or (type(jobs) == "table" and jobs:size()) or 1
     local comax = opt.comax or math.min(total, 4)
+    local distcc = opt.distcc
     local timeout = opt.timeout or 500
     local group_name = name
     local jobs_cb = type(jobs) == "function" and jobs or nil
@@ -158,12 +161,17 @@ function main(name, jobs, opt)
     while index < total do
         scheduler.co_group_begin(group_name, function (co_group)
             local freemax = comax - #co_group
-            local max = math.min(index + freemax, total)
+            local local_max = math.min(index + freemax, total)
+            local total_max = local_max
+            if distcc then
+                total_max = math.min(index + freemax + distcc:freejobs(), total)
+            end
             local jobfunc = jobs_cb
-            while index < max do
+            while index < total_max do
 
                 -- uses job pool?
                 local jobname
+                local distccjob = false
                 if not jobs_cb then
 
                     -- get job priority
@@ -185,11 +193,21 @@ function main(name, jobs, opt)
                         job_pending = job
                         break
                     end
-                    job_pending = nil
+
+                    -- we can only continue to run the job with distcc if local jobs are full
+                    if distcc and index >= local_max then
+                        if job.distcc then
+                            distccjob = true
+                        else
+                            job_pending = job
+                            break
+                        end
+                    end
 
                     -- get run function
                     jobfunc = job.run
                     jobname = job.name
+                    job_pending = nil
                 else
                     jobname = tostring(index)
                 end
@@ -200,6 +218,12 @@ function main(name, jobs, opt)
                     try
                     {
                         function()
+                            if distcc then
+                                local co_running = scheduler.co_running()
+                                if co_running then
+                                    co_running:data_set("distcc.distccjob", distccjob)
+                                end
+                            end
                             running_jobs_indices[i] = i
                             if jobfunc then
                                 if opt.curdir then

@@ -77,7 +77,7 @@ It uses xmake.lua to maintain project builds with a very simple and readable syn
 We can use it to build projects directly like Make/Ninja or generate project files like CMake/Meson. It also has a built-in package management system to help users integrate C/C++ dependencies.
 
 ```
-Xmake = Build backend + Project Generator + Package Manager
+Xmake = Build backend + Project Generator + Package Manager + [Remote|Distributed] Compilation
 ```
 
 If you want to know more, please refer to: [Documents](https://xmake.io/#/getting_started), [Github](https://github.com/xmake-io/xmake) and [Gitee](https://gitee.com/tboox/xmake). You are also welcome to join our [community](https://xmake.io/#/about/contact).
@@ -299,6 +299,7 @@ c51           Keil development tools for the 8051 Microcontroller Architecture
 * Quick toolchain management
 * A large number of expansion modules
 * Remote compilation support
+* Distributed compilation support
 
 ## Supported Projects
 
@@ -318,6 +319,22 @@ c51           Keil development tools for the 8051 Microcontroller Architecture
 * Lex/yacc program
 * C++20 Modules
 * Linux Kernel Driver Modules
+
+## Distributed Compilation
+
+- [x] Cross-platform support
+- [x] Support for msvc, clang, gcc and cross-compilation toolchain
+- [x] Support for building android, ios, linux, win, macOS programs
+- [x] No dependencies other than the compilation toolchain
+- [x] Support for build server load balancing scheduling
+- [x] Support for real time compressed transfer of large files (lz4)
+- [x] Almost zero configuration cost, no shared filesystem required, more convenience and security
+
+For more details see: [#274](https://github.com/xmake-io/xmake/issues/274)
+
+## Remote compilation
+
+For more details see: [#622](https://github.com/xmake-io/xmake/issues/622)
 
 ## More Examples
 

@@ -19,7 +19,7 @@
 --
 
 -- imports
-import("private.service.config")
+import("private.service.client_config", {alias = "config"})
 import("private.service.remote_build.client", {alias = "remote_build_client"})
 
 -- is enabled?
@@ -29,5 +29,5 @@ end
 
 function main()
     config.load()
-    remote_build_client():runcmd("xmake", xmake.argv())
+    remote_build_client.singleton():runcmd("xmake", xmake.argv())
 end

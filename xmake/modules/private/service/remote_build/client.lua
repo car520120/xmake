@@ -26,13 +26,11 @@ import("core.base.option")
 import("core.base.scheduler")
 import("core.project.config", {alias = "project_config"})
 import("lib.detect.find_tool")
-import("utils.archive.archive", {alias = "archive_files"})
-import("private.service.config")
+import("private.service.client_config", {alias = "config"})
 import("private.service.message")
 import("private.service.client")
 import("private.service.stream", {alias = "socket_stream"})
 import("private.service.remote_build.filesync", {alias = "new_filesync"})
-import("private.service.remote_build.environment")
 
 -- define module
 local remote_build_client = remote_build_client or client()
@@ -43,8 +41,8 @@ function remote_build_client:init()
     super.init(self)
 
     -- init address
-    local address = assert(config.get("remote_build.client.connect"), "config(remote_build.client.connect): not found!")
-    super.address_set(self, address)
+    local address = assert(config.get("remote_build.connect"), "config(remote_build.connect): not found!")
+    self:address_set(address)
 
     -- get project directory
     local projectdir = os.projectdir()
@@ -61,9 +59,6 @@ function remote_build_client:init()
     filesync:ignorefiles_add(".git/**")
     filesync:ignorefiles_add(".xmake/**")
     self._FILESYNC = filesync
-
-    -- check environment
-    environment.check(false)
 end
 
 -- get class
@@ -79,11 +74,11 @@ function remote_build_client:connect()
     end
 
     -- we need user authorization?
-    local token = config.get("remote_build.client.token")
+    local token = config.get("remote_build.token")
     if not token and self:user() then
 
         -- get user password
-        cprint("Please input user ${bright}%s${clear} password:", self:user())
+        cprint("Please input user ${bright}%s${clear} password to connect <%s:%d>:", self:user(), self:addr(), self:port())
         io.flush()
         local pass = (io.read() or ""):trim()
         assert(pass ~= "", "password is empty!")
@@ -190,7 +185,6 @@ function remote_build_client:sync()
     local errors
     local ok = false
     local diff_files
-    local archive_diff_file
     print("%s: sync files in %s:%d ..", self, addr, port)
     while sock do
 
@@ -205,18 +199,11 @@ function remote_build_client:sync()
             break
         end
 
-        -- archive diff files
-        print("Archiving files ..")
-        archive_diff_file, errors = self:_archive_diff_files(diff_files)
-        if not archive_diff_file or not os.isfile(archive_diff_file) then
-            break
-        end
-
         -- do sync
-        cprint("Uploading files with ${bright}%d${clear} bytes ..", os.filesize(archive_diff_file))
+        cprint("Uploading files ..")
         local send_ok = false
         if stream:send_msg(message.new_sync(session_id, diff_files, {token = self:token()}), {compress = true}) and stream:flush() then
-            if stream:send_file(archive_diff_file) and stream:flush() then
+            if self:_send_diff_files(stream, diff_files) then
                 send_ok = true
             end
         end
@@ -234,9 +221,6 @@ function remote_build_client:sync()
             errors = msg:errors()
         end
         break
-    end
-    if archive_diff_file then
-        os.tryrm(archive_diff_file)
     end
     if ok then
         print("%s: sync files ok!", self)
@@ -381,6 +365,29 @@ function remote_build_client:session_id()
     return self:status().session_id or hash.uuid():split("-", {plain = true})[1]:lower()
 end
 
+-- set the given client address
+function remote_build_client:address_set(address)
+    local addr, port, user = self:address_parse(address)
+    self._ADDR = addr
+    self._PORT = port
+    self._USER = user
+end
+
+-- get user name
+function remote_build_client:user()
+    return self._USER
+end
+
+-- get the ip address
+function remote_build_client:addr()
+    return self._ADDR
+end
+
+-- get the address port
+function remote_build_client:port()
+    return self._PORT
+end
+
 -- get filesync
 function remote_build_client:_filesync()
     return self._FILESYNC
@@ -431,25 +438,48 @@ function remote_build_client:_diff_files(stream)
     return result, errors
 end
 
--- archive diff files
-function remote_build_client:_archive_diff_files(diff_files)
-    local archivefile = os.tmpfile() .. ".zip"
-    local archivedir = path.directory(archivefile)
-    if not os.isdir(archivedir) then
-        os.mkdir(archivedir)
-    end
-    local filelist = {}
+-- send diff files
+function remote_build_client:_send_diff_files(stream, diff_files)
+    local count = 0
+    local totalsize = 0
+    local compressed_size = 0
+    local totalcount = #(diff_files.inserted or {}) + #(diff_files.modified or {})
+    local time = os.mclock()
+    local startime = time
     for _, fileitem in ipairs(diff_files.inserted) do
-        table.insert(filelist, fileitem)
+        local filesize = os.filesize(fileitem)
+        if os.mclock() - time > 1000 then
+            cprint("Uploading ${bright}%d%%${clear} ..", math.floor(count * 100 / totalcount))
+            time = os.mclock()
+        end
+        vprint("uploading %s, %d bytes ..", fileitem, filesize)
+        local sent, compressed_real = stream:send_file(fileitem, {compress = filesize > 4096})
+        if not sent then
+            return false
+        end
+        count = count + 1
+        totalsize = totalsize + filesize
+        compressed_size = compressed_size + compressed_real
     end
     for _, fileitem in ipairs(diff_files.modified) do
-        table.insert(filelist, fileitem)
+        local filesize = os.filesize(fileitem)
+        if os.mclock() - time > 1000 then
+            cprint("Uploading ${bright}%d%%${clear} ..", math.floor(count * 100 / totalcount))
+            time = os.mclock()
+        end
+        vprint("uploading %s, %d bytes ..", fileitem, filesize)
+        local sent, compressed_real = stream:send_file(fileitem, {compress = filesize > 4096})
+        if not sent then
+            return false
+        end
+        count = count + 1
+        totalsize = totalsize + filesize
+        compressed_size = compressed_size + compressed_real
     end
-    local ok = archive_files(archivefile, filelist, {curdir = self:projectdir()})
-    if not ok then
-        return nil, "archive files failed!"
-    end
-    return archivefile
+    cprint("Uploading ${bright}%d%%${clear} ..", math.floor(count * 100 / totalcount))
+    cprint("${bright}%d${clear} files, ${bright}%d (%d%%)${clear} bytes are uploaded, spent ${bright}%d${clear} ms.",
+        totalcount, compressed_size, math.floor(compressed_size * 100 / totalsize), os.mclock() - startime)
+    return stream:flush()
 end
 
 -- read stdin data
@@ -500,8 +530,23 @@ function is_connected()
     end
 end
 
-function main()
+-- new a client instance
+function new()
     local instance = remote_build_client()
     instance:init()
     return instance
+end
+
+-- get the singleton
+function singleton()
+    local instance = _g.singleton
+    if not instance then
+        instance = new()
+        _g.singleton = instance
+    end
+    return instance
+end
+
+function main()
+    return new()
 end

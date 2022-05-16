@@ -21,16 +21,37 @@
 -- imports
 import("core.base.option")
 import("core.base.scheduler")
+import("private.service.server_config", {alias = "config"})
 import("private.service.remote_build.server", {alias = "remote_build_server"})
+import("private.service.distcc_build.server", {alias = "distcc_build_server"})
 
 function _start_remote_build_server(...)
     remote_build_server(...):runloop()
 end
 
-function main(...)
-    local starters = {_start_remote_build_server}
+function _start_distcc_build_server(...)
+    distcc_build_server(...):runloop()
+end
+
+function main(daemon, ...)
+    if daemon then
+        config.load()
+    end
+    local starters = {}
+    if option.get("remote") then
+        table.insert(starters, _start_remote_build_server)
+    elseif option.get("distcc") then
+        table.insert(starters, _start_distcc_build_server)
+    else
+        if config.get("remote_build") then
+            table.insert(starters, _start_remote_build_server)
+        end
+        if config.get("distcc_build") then
+            table.insert(starters, _start_distcc_build_server)
+        end
+    end
     for _, start_server in ipairs(starters) do
-        scheduler.co_start(start_server, ...)
+        scheduler.co_start(start_server, daemon, ...)
     end
 end
 

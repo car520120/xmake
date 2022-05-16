@@ -110,89 +110,81 @@ function _get_command_string(cmd, vcxprojdir)
     end
 end
 
--- add target custom commands for target
-function _make_custom_commands_for_target(commands, target, vcxprojdir, suffix)
-    for _, ruleinst in ipairs(target:orderules()) do
-        local scriptname = "buildcmd" .. (suffix and ("_" .. suffix) or "")
-        local script = ruleinst:script(scriptname)
-        if script then
-            local batchcmds_ = batchcmds.new({target = target})
-            script(target, batchcmds_, {})
-            if not batchcmds_:empty() then
-                for _, cmd in ipairs(batchcmds_:cmds()) do
-                    local command = _get_command_string(cmd, vcxprojdir)
-                    if command then
-                        local key = suffix and suffix or "before"
-                        commands[key] = commands[key] or {}
-                        table.insert(commands[key], command)
-                    end
-                end
+function _make_autogen_for_target(autocmds,target,vcxprojdir,script)
+    local batchcmds_ = batchcmds.new({target = target})
+    script(target, batchcmds_, {})
+    if not batchcmds_:empty() then
+        for _, cmd in ipairs(batchcmds_:cmds()) do
+            local command = _get_command_string(cmd, vcxprojdir)
+            if command then
+                table.insert(autocmds.commands, command)
             end
         end
+        table.join2(autocmds.autogens,batchcmds_:autogens())
+    end
+end
 
-        scriptname = "linkcmd" .. (suffix and ("_" .. suffix) or "")
-        script = ruleinst:script(scriptname)
-        if script then
-            local batchcmds_ = batchcmds.new({target = target})
-            script(target, batchcmds_, {})
-            if not batchcmds_:empty() then
-                for _, cmd in ipairs(batchcmds_:cmds()) do
-                    local command = _get_command_string(cmd, vcxprojdir)
-                    if command then
-                        local key = (suffix and suffix or "before") .. "_link"
-                        commands[key] = commands[key] or {}
-                        table.insert(commands[key], command)
-                    end
-                end
+-- add target custom commands for target
+function _make_custom_commands_for_target(autocmds, target, vcxprojdir, suffix)
+
+    local objs = {}
+    local key_sb = suffix and suffix or "before"
+    local key_sbl = (suffix and suffix or "before") .. "_link"
+    table.insert(objs,{
+        key = key_sb,
+        scriptname =  "buildcmd" .. (suffix and ("_" .. suffix) or "")
+    })
+
+    table.insert(objs,{
+        key = key_sbl,
+        scriptname =  "linkcmd" .. (suffix and ("_" .. suffix) or "")
+    })
+
+    autocmds[key_sb] =autocmds[key_sb] or {}
+    autocmds[key_sbl] =autocmds[key_sb] or {}
+    autocmds[key_sb].commands = autocmds[key_sb].commands or {}
+    autocmds[key_sb].autogens = autocmds[key_sb].autogens or {}
+
+    for _, ruleinst in ipairs(target:orderules()) do
+        for _,obj in pairs(objs) do
+            local script = ruleinst:script(obj.scriptname)
+            if script then
+                _make_autogen_for_target(autocmds[obj.key],target,vcxprojdir,script)
             end
         end
     end
 end
 
--- add target custom commands for object rules
-function _make_custom_commands_for_objectrules(commands, target, sourcebatch, vcxprojdir, suffix)
-
+function _make_custom_commands_for_objectrules(autocmds, target, sourcebatch, vcxprojdir, suffix)
     -- get rule
     local rulename = assert(sourcebatch.rulename, "unknown rule for sourcebatch!")
     local ruleinst = assert(project.rule(rulename) or rule.rule(rulename), "unknown rule: %s", rulename)
 
-    -- generate commands for xx_buildcmd_files
-    local scriptname = "buildcmd_files" .. (suffix and ("_" .. suffix) or "")
-    local script = ruleinst:script(scriptname)
-    if script then
-        local batchcmds_ = batchcmds.new({target = target})
-        script(target, batchcmds_, sourcebatch, {})
-        if not batchcmds_:empty() then
-            for _, cmd in ipairs(batchcmds_:cmds()) do
-                local command = _get_command_string(cmd, vcxprojdir)
-                if command then
-                    local key = suffix and suffix or "before"
-                    commands[key] = commands[key] or {}
-                    table.insert(commands[key], command)
-                end
-            end
-        end
-    end
+    local objs = {}
+    local key = suffix and suffix or "before"
+    table.insert(objs,{
+        key = key,
+        srcfiles = {sourcebatch},
+        scriptname =  "buildcmd_files" .. (suffix and ("_" .. suffix) or "")
+    })
 
-    -- generate commands for xx_buildcmd_file
-    if not script then
-        scriptname = "buildcmd_file" .. (suffix and ("_" .. suffix) or "")
-        script = ruleinst:script(scriptname)
-        if script then
-            local sourcekind = sourcebatch.sourcekind
-            for _, sourcefile in ipairs(sourcebatch.sourcefiles) do
-                local batchcmds_ = batchcmds.new({target = target})
-                script(target, batchcmds_, sourcefile, {})
-                if not batchcmds_:empty() then
-                    for _, cmd in ipairs(batchcmds_:cmds()) do
-                        local command = _get_command_string(cmd, vcxprojdir)
-                        if command then
-                            local key = suffix and suffix or "before"
-                            commands[key] = commands[key] or {}
-                            table.insert(commands[key], command)
-                        end
-                    end
+    table.insert(objs,{
+        key = key,
+        srcfiles = sourcebatch.sourcefiles,
+        scriptname =  "buildcmd_file" .. (suffix and ("_" .. suffix) or "")
+    })
+
+    autocmds[key] = autocmds[key] or {}
+    autocmds[key].commands = autocmds[key].commands or {}
+    autocmds[key].autogens = autocmds[key].autogens or {}
+    for index,obj in pairs(objs) do
+        srcipt = ruleinst:script(obj.scriptname)
+        if srcipt then
+            for _,srcfile in ipairs(obj.srcfiles) do
+                local object_srcipt = function(target_,batchcmds_,opt)
+                    srcipt(target_,batchcmds_,srcfile,opt)
                 end
+                _make_autogen_for_target(autocmds[obj.key],target,vcxprojdir,object_srcipt)
             end
         end
     end
@@ -200,30 +192,28 @@ end
 
 -- make custom commands
 function _make_custom_commands(target, vcxprojdir)
-    -- https://github.com/xmake-io/xmake/issues/2337
-    target:data_set("plugin.project.kind", "vs")
+    
     -- https://github.com/xmake-io/xmake/issues/2258
     target:data_set("plugin.project.translate_path", function (p)
         return _translate_path(p, vcxprojdir)
     end)
-    local commands = {}
-    _make_custom_commands_for_target(commands, target, vcxprojdir, "before")
-    _make_custom_commands_for_target(commands, target, vcxprojdir)
+    local autocmds = {}
+    _make_custom_commands_for_target(autocmds, target, vcxprojdir, "before")
+    _make_custom_commands_for_target(autocmds, target, vcxprojdir)
     for _, sourcebatch in pairs(target:sourcebatches()) do
         local sourcekind = sourcebatch.sourcekind
         if sourcekind ~= "cc" and sourcekind ~= "cxx" and sourcekind ~= "as" then
-            _make_custom_commands_for_objectrules(commands, target, sourcebatch, vcxprojdir, "before")
-            _make_custom_commands_for_objectrules(commands, target, sourcebatch, vcxprojdir, nil)
-            _make_custom_commands_for_objectrules(commands, target, sourcebatch, vcxprojdir, "after")
+            _make_custom_commands_for_objectrules(autocmds, target, sourcebatch, vcxprojdir, "before")
+            _make_custom_commands_for_objectrules(autocmds, target, sourcebatch, vcxprojdir, nil)
+            _make_custom_commands_for_objectrules(autocmds, target, sourcebatch, vcxprojdir, "after")
         end
     end
-    _make_custom_commands_for_target(commands, target, vcxprojdir, "after")
-    return commands
+    _make_custom_commands_for_target(autocmds, target, vcxprojdir, "after")
+    return autocmds
 end
 
 -- make target info
 function _make_targetinfo(mode, arch, target, vcxprojdir)
-
     -- init target info
     local targetinfo = { mode = mode, arch = (arch == "x86" and "Win32" or "x64") }
 
@@ -367,9 +357,28 @@ function _make_targetinfo(mode, arch, target, vcxprojdir)
             break
         end
     end
+    local autocmds = _make_custom_commands(target, vcxprojdir)
+    local commands = {}
+    local autogens = {}
+    local autogen_count = 0
+    for key,mt in pairs(autocmds) do
+        if #mt.commands then
+            commands[key] = mt.commands
+        end
+        local  c = #mt.autogens
+        if 0 < c then
+            autogens[key] = mt.autogens
+            autogen_count = autogen_count + c 
+        end
+    end
+
+    if 0 < autogen_count then
+        targetinfo.moc_dataset_filename = "qtmoc_dataset_" .. target:name() .. ".cpp"
+    end
 
     -- save custom commands
-    targetinfo.commands = _make_custom_commands(target, vcxprojdir)
+    targetinfo.commands = commands
+    targetinfo.autogens = autogens
     return targetinfo
 end
 

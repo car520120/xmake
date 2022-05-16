@@ -1,4 +1,3 @@
-
 --!A cross-platform build utility based on Lua
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,7 +22,7 @@ rule("qt.moc")
     add_deps("qt.env")
     set_extensions(".h", ".hpp")
     before_buildcmd_file(function (target, batchcmds, sourcefile, opt)
-
+        
         -- imports
         import("core.tool.compiler")
 
@@ -46,7 +45,7 @@ rule("qt.moc")
                 local filegroups_extraconf = target:extraconf("filegroups")
                 for _,fg in ipairs(filegroups) do
                     local rootdir = filegroups_extraconf[fg].rootdir
-                    if not path.is_absolute(rootdir) then
+                    if rootdir and not path.is_absolute(rootdir) then
                         rootdir = path.absolute(rootdir)
                     end
                     table.insert(moc_rootdirs,path.normalize(rootdir .. "/"))
@@ -56,8 +55,6 @@ rule("qt.moc")
             table.insert(moc_rootdirs,path.normalize(os.projectdir() .. "/"))
             target.moc_rootdirs = moc_rootdirs
         end
-      
-
 
         local filter
         local fileitem =  path.is_absolute(sourcefile) and sourcefile or  path.absolute(sourcefile)
@@ -84,7 +81,7 @@ rule("qt.moc")
         if sourcefile:endswith(".cpp") then
             filename_moc = basename .. ".moc"
         end
-
+        
         if filter then
             filename_moc = path.join(filter,filename_moc)
         end
@@ -128,6 +125,7 @@ rule("qt.moc")
 
         -- add deps
         batchcmds:add_depfiles(sourcefile)
+        batchcmds:add_autogenfiles(sourcefile_moc)
         batchcmds:set_depmtime(os.mtime(objectfile))
         batchcmds:set_depcache(target:dependfile(objectfile))
     end)

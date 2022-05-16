@@ -31,7 +31,7 @@ import("core.language.language")
 import("utils.progress", {alias = "progress_utils"})
 
 -- define module
-local batchcmds = batchcmds or object { _init = {"_TARGET", "_CMDS", "_DEPS", "_tip"}}
+local batchcmds = batchcmds or object { _init = {"_TARGET", "_CMDS", "_DEPS", "_tip","_autogens"}}
 
 -- show text
 function _show(showtext, progress)
@@ -299,6 +299,16 @@ end
 -- get deps
 function batchcmds:deps()
     return self._DEPS
+end
+
+function batchcmds:autogens()
+    return self._autogens
+end
+
+function batchcmds:add_autogenfiles(...)
+    local autogens = self._autogens or {}
+    table.join2(autogens, ...)
+    self._autogens = autogens
 end
 
 -- add dependent files

@@ -62,14 +62,17 @@ end
 
 -- get toolset version
 function _get_toolset_ver(targetinfo, vsinfo)
-
     -- get toolset version from vs version
     local toolset_ver = nil
-    local vs_toolset = toolchain.load("msvc"):config("vs_toolset") or config.get("vs_toolset")
+    local vs_toolset =  config.get("vs_toolset") or toolchain.load("msvc"):config("vs_toolset")
     if vs_toolset then
-        local verinfo = vs_toolset:split('%.')
-        if #verinfo >= 2 then
-            toolset_ver = "v" .. verinfo[1] .. (verinfo[2]:sub(1, 1) or "0")
+        if vs_toolset:startswith("v") then
+            toolset_ver = vs_toolset
+        else
+            local verinfo = vs_toolset:split('%.')
+            if #verinfo >= 2 then
+                toolset_ver = "v" .. verinfo[1] .. (verinfo[2]:sub(1, 1) or "0")
+            end
         end
     end
     if not toolset_ver then
@@ -704,7 +707,7 @@ function _make_source_options_cuda(vcxprojfile, flags, opt)
 end
 
 -- make custom commands item
-function _make_custom_commands_item(vcxprojfile, commands, suffix)
+function _make_custom_commands_item(vcxprojfile, commands, suffix,project_dir)
     if suffix == "after" or suffix == "after_link" then
         vcxprojfile:print("<PostBuildEvent>")
     elseif suffix == "before" then
@@ -714,9 +717,12 @@ function _make_custom_commands_item(vcxprojfile, commands, suffix)
     end
     vcxprojfile:print("<Message></Message>")
     vcxprojfile:print("<Command>setlocal")
+    local sln_dir = path.is_absolute(project_dir) and project_dir or path.absolute(project_dir)
+    vcxprojfile:print("cd %s", path.relative(os.projectdir(),sln_dir))
     for _, command in ipairs(commands) do
         vcxprojfile:print("%s", command)
     end
+    vcxprojfile:print("cd %s", path.relative(sln_dir,os.projectdir()))
     vcxprojfile:write([[if %errorlevel% neq 0 goto :xmEnd
 :xmEnd
 endlocal &amp; call :xmErrorLevel %errorlevel% &amp; goto :xmDone
@@ -735,15 +741,15 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
 end
 
 -- make custom commands
-function _make_custom_commands(vcxprojfile, target)
+function _make_custom_commands(vcxprojfile, target,project_dir)
     for suffix, cmds in pairs(target.commands) do
-        _make_custom_commands_item(vcxprojfile, cmds, suffix)
+        _make_custom_commands_item(vcxprojfile, cmds, suffix,project_dir)
     end
 end
 
 -- make common item
 function _make_common_item(vcxprojfile, vsinfo, target, targetinfo)
-
+    
     -- init the linker kinds
     local linkerkinds =
     {
@@ -938,7 +944,7 @@ function _make_common_item(vcxprojfile, vsinfo, target, targetinfo)
     end
 
     -- make custom commands
-    _make_custom_commands(vcxprojfile, targetinfo)
+    _make_custom_commands(vcxprojfile, targetinfo,target.project_dir)
 
     -- leave ItemDefinitionGroup
     vcxprojfile:leave("</ItemDefinitionGroup>")
@@ -1310,6 +1316,9 @@ function _make_source_files(vcxprojfile, vsinfo, target)
 
         -- make source file infos
         local sourceinfos = {}
+        local autogens = {}
+        local autogen_args
+        local chk_files = {}
         for _, targetinfo in ipairs(target.info) do
             for _, sourcebatch in pairs(targetinfo.sourcebatches) do
                 local sourcekind = sourcebatch.sourcekind
@@ -1318,10 +1327,52 @@ function _make_source_files(vcxprojfile, vsinfo, target)
                     for idx, sourcefile in ipairs(sourcebatch.sourcefiles) do
                         local objectfile    = objectfiles[idx]
                         local flags         = targetinfo.sourceflags[sourcefile]
+                        local compargv = targetinfo.compargvs[sourcefile]
                         sourceinfos[sourcefile] = sourceinfos[sourcefile] or {}
-                        table.insert(sourceinfos[sourcefile], {targetinfo = targetinfo, mode = targetinfo.mode, arch = targetinfo.arch, sourcekind = sourcekind, objectfile = objectfile, flags = flags, compargv = targetinfo.compargvs[sourcefile]})
+                        if not autogen_args and (sourcekind == "cc" or sourcekind == "cxx") then
+                            autogen_args = {}
+                            autogen_args.flags = flags
+                            autogen_args.compargv = compargv
+                        end
+                        table.insert(sourceinfos[sourcefile], {targetinfo = targetinfo, mode = targetinfo.mode, arch = targetinfo.arch, sourcekind = sourcekind, objectfile = objectfile, flags = flags, compargv = compargv})
                     end
                 end
+            end
+            local moc_fn = targetinfo.moc_dataset_filename
+            if moc_fn then
+                if not autogens[moc_fn] then
+                    autogens[moc_fn] = {}
+                    local  moc_sourceinfos = {}
+                    moc_sourceinfos.targetinfo = targetinfo
+                    moc_sourceinfos.mode = targetinfo.mode
+                    moc_sourceinfos.arch = targetinfo.arch
+                    moc_sourceinfos.sourcekind = "cxx"
+                    moc_sourceinfos.flags = autogen_args.flags
+                    moc_sourceinfos.objectfile = path.join(targetinfo.objectdir,moc_fn .. ".obj")
+                    moc_sourceinfos.compargvs = autogen_args.compargvs
+                    autogens[moc_fn].sourceinfos = {}
+                    autogens[moc_fn].sourceinfos = {moc_sourceinfos}
+                    autogens[moc_fn].moc_dataset_filename = path.join(target.project_dir,moc_fn)
+                    autogens[moc_fn].dataset = {}
+                end
+                local sln_dir = path.is_absolute(target.project_dir) and target.project_dir or path.absolute(target.project_dir)
+                local work_dir = os.projectdir()
+                local chk_key = table.concat({targetinfo.arch,targetinfo.mode},"_")
+                
+                chk_files[chk_key] = chk_files[chk_key] or {}
+                table.insert(autogens[moc_fn].dataset,table.concat({"#ifdef __config_",targetinfo.arch,"__"}))
+                table.insert(autogens[moc_fn].dataset,table.concat({"#ifdef __config_",targetinfo.mode,"__"}))
+
+                for _,autogen in pairs(targetinfo.autogens) do
+                    for _,fn in ipairs(autogen) do
+                        if not chk_files[chk_key][fn] then
+                            chk_files[chk_key][fn] = true
+                            local dataset_fn = path.relative(path.join(work_dir,fn),sln_dir) 
+                            table.insert(autogens[moc_fn].dataset,table.concat({'#include "',dataset_fn,'"'}) ) 
+                        end
+                    end
+                end
+                table.insert(autogens[moc_fn].dataset,"#endif\n#endif") 
             end
         end
 
@@ -1333,6 +1384,12 @@ function _make_source_files(vcxprojfile, vsinfo, target)
                 _make_source_file_forspec(vcxprojfile, vsinfo, target, sourcefile, sourceinfo)
             end
         end
+
+        for sourcefile,autogen in pairs(autogens) do
+            io.writefile(autogen.moc_dataset_filename,table.concat(autogen.dataset,"\n"))    
+            _make_source_file_forall(vcxprojfile, vsinfo, target, path.join(target.project_dir,sourcefile), autogen.sourceinfos)
+        end
+
 
         -- make precompiled source file
         _make_source_file_forpch(vcxprojfile, vsinfo, target)
@@ -1353,7 +1410,7 @@ end
 
 -- make vcxproj
 function make(vsinfo, target)
-
+    
     -- the target name
     local targetname = target.name
 
@@ -1381,10 +1438,10 @@ function make(vsinfo, target)
 
     -- make source files
     _make_source_files(vcxprojfile, vsinfo, target)
-
+    
     -- make tailer
     _make_tailer(vcxprojfile, vsinfo, target)
-
+    
     -- exit solution file
     vcxprojfile:close()
 end
